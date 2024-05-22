@@ -14,7 +14,13 @@ const uint32_t kSerialBaudRate = 115200;
 
 const uint32_t kLoopDelay = 3000;
 
-const uint32_t kPinsMask = (1 << S0) | (1 << S1) | (1 << S2) | (1 << S3);
+const uint32_t kLedDelay = 200;
+
+const uint32_t kPinsMask1 = (1 << S0) | (1 << S1);
+const uint32_t kPinsMask2 = (1 << (S2 - 32)) | (1 << (S3 - 32));
+const uint32_t kPinsMaskEn = (1 << EN);
+
+#define USE_LEDS 0
 
 #define MUX_SELECTORS 4
 
@@ -95,17 +101,23 @@ void setupPins()
   digitalWrite(S1, false);
   digitalWrite(S2, false);
   digitalWrite(S3, false);
-  digitalWrite(EN, false);
+  digitalWrite(EN, true);
 }
 
 void writePinsUsingFor()
 {
   for (int _counterChannel = 0; _counterChannel < INSOLE_CHANNELS; _counterChannel++)
   {
+    digitalWrite(EN, true);
     for (int _counterSelector = 0; _counterSelector < MUX_SELECTORS; _counterSelector++)
     {
       digitalWrite(selectorMatrix[_counterSelector], multiplexMatrix[_counterChannel][_counterSelector]);
     }
+
+    digitalWrite(EN, false);
+#if (USE_LEDS == 1)
+    delay(kLedDelay);
+#endif
   }
 }
 
@@ -113,14 +125,31 @@ void writePinsDirectly()
 {
   for (uint32_t _counterChannel = 0; _counterChannel < INSOLE_CHANNELS; _counterChannel++)
   {
-    uint32_t values = ((_counterChannel & 0x0001) << S0) |
-                      ((_counterChannel & 0x0002) << (S1 - 1)) |
-                      ((_counterChannel & 0x0004) << (S2 - 2)) |
-                      ((_counterChannel & 0x0008) << (S3 - 3));
+    uint32_t values1 = ((_counterChannel & 0x01) << S0) |
+                       ((_counterChannel & 0x02) << (S1 - 1));
+
+    uint32_t values2 = (((_counterChannel & 0x04) >> 2) << (S2 - 32)) |
+                       (((_counterChannel & 0x08) >> 3) << (S3 - 32));
+
+    // Disable Mux
+    GPIO.out_w1ts = kPinsMaskEn;
 
     // Clear the bits first
-    GPIO.out_w1tc = kPinsMask;
+    GPIO.out_w1tc = kPinsMask1;
+    GPIO.out1_w1tc.val = kPinsMask2;
+
     // Set the bits
-    GPIO.out_w1ts = values;
+    GPIO.out_w1ts = values1;
+    GPIO.out1_w1ts.val = values2;
+
+    // Enable Mux
+    GPIO.out_w1tc = kPinsMaskEn;
+
+#if (USE_LEDS == 1)
+    delay(kLedDelay);
+    Serial.printf("CounterChannel: %d\n", _counterChannel);
+    Serial.printf("values1: %X\n", values1);
+    Serial.printf("values2: %X\n", values2);
+#endif
   }
 }
