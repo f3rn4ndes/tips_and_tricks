@@ -54,6 +54,8 @@ void setupPins();
 
 void writePinsUsingFor();
 
+void writeOn();
+
 void writePinsDirectly();
 
 void setup()
