@@ -1,114 +1,121 @@
 #include <Arduino.h>
-#include "esp_heap_caps.h"
+#include "driver/gpio.h"
 
-#define LED_PIN 2
+const gpio_num_t kS0Pin = GPIO_NUM_27;
+const gpio_num_t kS1Pin = GPIO_NUM_26;
+const gpio_num_t kS2Pin = GPIO_NUM_33;
+const gpio_num_t kS3Pin = GPIO_NUM_32;
 
-const uint8_t kS0Pin = GPIO_NUM_27;
-const uint8_t kS1Pin = GPIO_NUM_26;
-const uint8_t kS2Pin = GPIO_NUM_33;
-const uint8_t kS3Pin = GPIO_NUM_32;
-const uint8_t kEPin = GPIO_NUM_25;
+const gpio_num_t kEPin = GPIO_NUM_25;
 
-const uint32_t kPinsMask1 = (1 << kS0Pin) | (1 << kS1Pin);
-const uint32_t kPinsMask2 = (1 << (kS2Pin - 32)) | (1 << (kS3Pin - 32));
+const gpio_num_t kProcessPin = GPIO_NUM_2;
 
-void NoCriticalCode();
+const uint32_t kSerialBaudRate = 115200;
 
-void IRAM_ATTR CriticalCode();
+const uint32_t kDelayStartMs = 1000;
+const uint32_t kDelayLoopMs = 1000;
 
-void SelectChannel(uint8_t channel);
+const uint32_t kChannelsSize = 16;
 
-void IRAM_ATTR SelectChannelDirectly(uint32_t channel);
+const uint32_t kMultiplexSelector[kChannelsSize] =
+    {0, 1, 2, 3, 4, 5, 6, 7, 15, 14, 13, 12, 11, 10, 9, 8};
 
-const uint8_t kSelectorMatrix[4] = {kS3Pin, kS2Pin, kS1Pin, kS0Pin};
+const uint32_t kMultiplexSelectorAlternate[kChannelsSize] =
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 
-// Binary Values to Multiplex Selectors
-const uint8_t kMultiplexMatrix[16][4] = {
-    {0, 0, 0, 0}, // 0  in decimal
-    {0, 0, 0, 1}, // 1  in decimal
-    {0, 0, 1, 0}, // 2  in decimal
-    {0, 0, 1, 1}, // 3  in decimal
-    {0, 1, 0, 0}, // 4  in decimal
-    {0, 1, 0, 1}, // 5  in decimal
-    {0, 1, 1, 0}, // 6  in decimal
-    {0, 1, 1, 1}, // 7  in decimal
-    {1, 1, 1, 1}, // 15 in decimal 1111
-    {1, 1, 1, 0}, // 14 in decimal 1110
-    {1, 1, 0, 1}, // 13 in decimal 1101
-    {1, 1, 0, 0}, // 12 in decimal 1100
-    {1, 0, 1, 1}, // 11 in decimal 1011
-    {1, 0, 1, 0}, // 10 in decimal 1010
-    {1, 0, 0, 1}, // 9  in decimal 1001
-    {1, 0, 0, 0}, // 8  in decimal 1000
-};
+const uint32_t kMockReadTimeUs = 200;
+
+void IRAM_ATTR SetPinLevel(uint8_t pin, bool level);
+
+void IRAM_ATTR WriteBus(uint8_t value);
+
+void IRAM_ATTR MockReadDevice(uint32_t read_time_us);
 
 void setup()
 {
+  delay(kDelayStartMs);
+  Serial.begin(kSerialBaudRate);
+  // Set the pins as outputs
+  gpio_pad_select_gpio(kS0Pin);
+  gpio_set_direction(kS0Pin, GPIO_MODE_OUTPUT);
+  gpio_pad_select_gpio(kS1Pin);
+  gpio_set_direction(kS1Pin, GPIO_MODE_OUTPUT);
+  gpio_pad_select_gpio(kS2Pin);
+  gpio_set_direction(kS2Pin, GPIO_MODE_OUTPUT);
+  gpio_pad_select_gpio(kS3Pin);
+  gpio_set_direction(kS3Pin, GPIO_MODE_OUTPUT);
+  gpio_pad_select_gpio(kEPin);
+  gpio_set_direction(kEPin, GPIO_MODE_OUTPUT);
+  gpio_pad_select_gpio(kProcessPin);
+  gpio_set_direction(kProcessPin, GPIO_MODE_OUTPUT);
 
-  Serial.begin(115200);
+  delay(kDelayStartMs);
 
-  pinMode(LED_PIN, OUTPUT);
-
-  pinMode(kS3Pin, OUTPUT);
-  pinMode(kS2Pin, OUTPUT);
-  pinMode(kS1Pin, OUTPUT);
-  pinMode(kS0Pin, OUTPUT);
-
-  digitalWrite(LED_PIN, false);
+  Serial.printf("\n----------------------------------\n");
+  Serial.printf("Start Application\n\n");
 }
 
 void loop()
 {
-  uint32_t check_time;
-
+  uint32_t check_time = 0;
+  // Test by writing values 0 to 15
+  Serial.printf("Start to Read Device\n");
   check_time = micros();
-  NoCriticalCode();
+  SetPinLevel(kProcessPin, false);
+  for (uint32_t i = 0; i < kChannelsSize; i++)
+  {
+    WriteBus(kMultiplexSelectorAlternate[i]);
+    MockReadDevice(kMockReadTimeUs);
+  }
+  SetPinLevel(kProcessPin, true);
   check_time = micros() - check_time;
-  Serial.printf("Time No Critical = %lu\n", check_time);
-  check_time = micros();
-  CriticalCode();
-  check_time = micros() - check_time;
-  Serial.printf("Time Critical = %lu\n", check_time);
-  delay(2000);
+  Serial.printf("Time to read mock device (us): %lu \n", check_time);
+  delay(kDelayLoopMs);
 }
 
-void NoCriticalCode()
+void IRAM_ATTR WriteBus(uint8_t value)
 {
-  for (int i = 0; i < 16; i++)
+  // Set kEPin low (enable)
+  SetPinLevel(kEPin, false);
+
+  // Write the value to the bus
+  SetPinLevel(kS0Pin, value & 0x01);
+  SetPinLevel(kS1Pin, value & 0x02);
+  SetPinLevel(kS2Pin, value & 0x04);
+  SetPinLevel(kS3Pin, value & 0x08);
+
+  // Set kEPin high (disable)
+  SetPinLevel(kEPin, true);
+}
+
+void IRAM_ATTR MockReadDevice(uint32_t read_time_us)
+{
+  delayMicroseconds(read_time_us);
+}
+
+// Helper function to set a GPIO pin to a specific level
+void IRAM_ATTR SetPinLevel(uint8_t pin, bool level)
+{
+  if (level)
   {
-    SelectChannel(i);
+    if (pin < 32)
+    {
+      GPIO.out_w1ts = (1 << pin);
+    }
+    else
+    {
+      GPIO.out1_w1ts.val = (1 << (pin - 32));
+    }
   }
-}
-
-void IRAM_ATTR CriticalCode()
-{
-  for (int i = 0; i < 16; i++)
+  else
   {
-    SelectChannelDirectly(i);
+    if (pin < 32)
+    {
+      GPIO.out_w1tc = (1 << pin);
+    }
+    else
+    {
+      GPIO.out1_w1tc.val = (1 << (pin - 32));
+    }
   }
-}
-
-void SelectChannel(uint8_t channel)
-{
-  for (uint8_t multiplexer_selector = 0; multiplexer_selector < 4; multiplexer_selector++)
-  {
-    digitalWrite(kSelectorMatrix[multiplexer_selector], kMultiplexMatrix[channel][multiplexer_selector]);
-  }
-}
-
-void IRAM_ATTR SelectChannelDirectly(uint32_t channel)
-{
-  uint32_t values1 = ((channel & 0x01) << kS0Pin) |
-                     ((channel & 0x02) << (kS1Pin - 1));
-
-  uint32_t values2 = (((channel & 0x04) >> 2) << (kS2Pin - 32)) |
-                     (((channel & 0x08) >> 3) << (kS3Pin - 32));
-
-  // Clear the bits first
-  GPIO.out_w1tc = kPinsMask1;
-  GPIO.out1_w1tc.val = kPinsMask2;
-
-  // Set the bits
-  GPIO.out_w1ts = values1;
-  GPIO.out1_w1ts.val = values2;
 }
