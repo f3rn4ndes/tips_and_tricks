@@ -55,7 +55,9 @@ void setup()
 
 void loop()
 {
-  uint16_t channel_value = 0xAA55;
+  uint16_t channel_value;
+
+  channel_value = 0xAA55;
 
   // Test by writing values 0 to 15
   Serial.printf("Start to Generate Data\n");
@@ -66,6 +68,7 @@ void loop()
     WriteChannel(i, channel_value);
     if (i < (kChannelsSize - 1))
       delayMicroseconds(kDelayBetweenFramesUs);
+    channel_value ^= 0xFFFF;
   }
   SetPinLevel(kProcessPin, true);
   delay(kDelayLoopMs);
