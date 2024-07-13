@@ -5,9 +5,11 @@
 #include "soc/timer_group_struct.h"
 #include "soc/timer_group_reg.h"
 
-#define SERIAL_TX_DIRECT 0
-#define SERIAL_TX_PRINT 1
-#define SERIAL_TX_MODE SERIAL_TX_DIRECT
+#define TIME_CRITICAL_TASK_STACK_SIZE 8192
+#define TIME_CRITICAL_TASK_PRIORITY configMAX_PRIORITIES - 1
+
+#define SERIAL_TASK_STACK_SIZE 8192
+#define SERIAL_TASK_PRIORITY 4
 
 #define GPIO_IN_Read(x) REG_READ(GPIO_IN_REG) & (1 << x)
 
@@ -28,6 +30,11 @@ const uint32_t kClockLineMaxSize = 16;
 const uint32_t kClockTimeout = 500000000;
 
 // globals
+
+TaskHandle_t timeCriticalTaskHandle = NULL;
+TaskHandle_t serialTaskHandle = NULL;
+SemaphoreHandle_t uartMutex;
+
 uint16_t transmitData = 0;
 boolean dataReady = false;
 
@@ -38,12 +45,18 @@ void IRAM_ATTR SetPinLevel(uint32_t pin, boolean level);
 
 inline uint32_t IRAM_ATTR clocks(void);
 
-void TransmitBuffer(void);
+void IRAM_ATTR TransmitBuffer(void);
+
+void IRAM_ATTR timeCriticalTask(void *pvParameters);
+
+void IRAM_ATTR serialTask(void *pvParameters);
 
 void setup()
 {
   delay(kDelayStartMs);
   Serial.begin(kSerialBaudRate);
+
+  uartMutex = xSemaphoreCreateMutex(); // Create a mutex for UART access
 
   // Set the pins as outputs
   gpio_pad_select_gpio(kProcessPin);
@@ -67,11 +80,49 @@ void setup()
 
   Serial.printf("\n----------------------------------\n");
   Serial.printf("Start Application\n\n");
+
+  // Create the time-critical task pinned to core 1
+  xTaskCreatePinnedToCore(
+      timeCriticalTask,
+      "timeCriticalTask",
+      TIME_CRITICAL_TASK_STACK_SIZE,
+      NULL,
+      TIME_CRITICAL_TASK_PRIORITY,
+      &timeCriticalTaskHandle,
+      1 // Pin to core 1
+  );
+
+  // Create the serial task pinned to core 0
+  xTaskCreatePinnedToCore(
+      serialTask,
+      "serialTask",
+      SERIAL_TASK_STACK_SIZE,
+      NULL,
+      SERIAL_TASK_PRIORITY,
+      &serialTaskHandle,
+      0 // Pin to core 0
+  );
 }
 
 void loop()
 {
+  // vTaskDelete(NULL);
+}
 
+void IRAM_ATTR TransmitBuffer(void)
+{
+  SetPinLevel(kProcessPin, false);
+  char buffer_tx[4];
+  buffer_tx[0] = (transmitData >> 8) & 0xFF;
+  buffer_tx[1] = transmitData & 0xFF;
+  buffer_tx[2] = 0x0A;
+  buffer_tx[3] = 0;
+  Serial.write(buffer_tx);
+  SetPinLevel(kProcessPin, true);
+}
+
+void IRAM_ATTR timeCriticalTask(void *pvParameters)
+{
   int level, old_level = 0, data_line = 0;
 
   uint32_t check_timeout = 0;
@@ -86,8 +137,6 @@ void loop()
       transmitData <<= 1;
       if (!clockLineCounter)
       {
-        // SetPinLevel(kSignalPin, false);
-        // SetPinLevel(kSignalPin, true);
         transmitData = 0;
         clockTimeout = clocks();
         clockLineCounter = 1;
@@ -128,16 +177,21 @@ void loop()
   }
 }
 
-void TransmitBuffer(void)
+void IRAM_ATTR serialTask(void *pvParameters)
 {
-  SetPinLevel(kProcessPin, false);
-  char buffer_tx[4];
-  buffer_tx[0] = (transmitData >> 8) & 0xFF;
-  buffer_tx[1] = transmitData & 0xFF;
-  buffer_tx[2] = 0x0A;
-  buffer_tx[3] = 0;
-  Serial.write(buffer_tx);
-  SetPinLevel(kProcessPin, true);
+  while (true)
+  {
+    if (xSemaphoreTake(uartMutex, portMAX_DELAY))
+    {
+      if (Serial.available() > 0)
+      {
+        int data = Serial.read();
+        Serial.write(data);
+      }
+      xSemaphoreGive(uartMutex);
+    }
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
 }
 
 void IRAM_ATTR SetPinLevel(uint32_t pin, boolean level)

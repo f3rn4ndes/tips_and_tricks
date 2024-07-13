@@ -19,10 +19,12 @@ const uint32_t kSerialBaudRate = 115200;
 
 const uint32_t kDelayStartMs = 1000;
 const uint32_t kDelayLoopMs = 1000;
-const uint32_t kDelayBetweenFramesUs = 125;
+const uint32_t kDelayBetweenFramesUs = 105;
 
 const uint32_t kChannelsSize = 8;
 const uint16_t kFrameDataMask = 0x0FFF;
+
+const uint8_t kChannelsTransmitSequences = 50;
 
 // globals
 SPISettings spiSettings(kSpiFrequency, MSBFIRST, SPI_MODE0);
@@ -59,19 +61,15 @@ void loop()
 
   channel_value = 0xAA55;
 
-  // Test by writing values 0 to 15
-  Serial.printf("Start to Generate Data\n");
-
-  SetPinLevel(kProcessPin, false);
-  for (uint16_t i = 0; i < kChannelsSize; i++)
+  for (uint32_t sequences = 0; sequences < kChannelsTransmitSequences; sequences++)
   {
-    WriteChannel(i, channel_value);
-    if (i < (kChannelsSize - 1))
+    for (uint16_t i = 0; i < kChannelsSize; i++)
+    {
+      WriteChannel(i, channel_value);
       delayMicroseconds(kDelayBetweenFramesUs);
-    channel_value ^= 0xFFFF;
+      channel_value ^= 0xFFFF;
+    }
   }
-  SetPinLevel(kProcessPin, true);
-  delay(kDelayLoopMs);
 }
 
 void IRAM_ATTR WriteChannel(uint16_t address, uint16_t value)
