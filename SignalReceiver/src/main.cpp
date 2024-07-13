@@ -77,7 +77,6 @@ void loop()
     if ((level != old_level) && (old_level == 0))
     {
       data_line = GPIO_IN_Read(kDataPin);
-      // SetPinLevel(kProcessPin, false);
       transmitData <<= 1;
       if (!clockLineCounter)
       {
