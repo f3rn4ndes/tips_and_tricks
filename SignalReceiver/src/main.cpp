@@ -11,9 +11,6 @@
 
 #define GPIO_IN_Read(x) REG_READ(GPIO_IN_REG) & (1 << x)
 
-#define STACK_SIZE 8192
-#define CORE_ONE 1
-
 #define kClockPin GPIO_NUM_27
 #define kDataPin GPIO_NUM_26
 
