@@ -162,6 +162,29 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
 
   register uint16_t transmit_data = 0;
 
+  boolean check = false;
+
+  GPIO_Set(kSignalPin);
+  GPIO_Set(kProcessPin);
+  while (!check)
+  {
+    level = GPIO_IN_Read(kClockPin);
+    if (!level)
+      check = true;
+  };
+  check = false;
+  while (!check)
+  {
+    level = GPIO_IN_Read(kClockPin);
+    if (level)
+      check = true;
+  };
+  delayMicroseconds(20);
+  GPIO_Clear(kSignalPin);
+  GPIO_Clear(kProcessPin);
+  level = 0;
+  old_level = 0;
+
   while (true)
   {
 
@@ -174,7 +197,6 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
       if (!clockLineCounter)
       {
         GPIO_Set(kSignalPin);
-        check_timeout_frame_size = micros();
         transmit_data = 0;
         clockTimeout = clocks();
         clockLineCounter = 1;
@@ -188,14 +210,14 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
         {
           transmit_data = 0;
           clockLineCounter = 0;
-          // clockTimeout = clocks();
-          // clockLineCounter = 0;
-          // if (data_line)
-          // {
-          //   transmit_data = 1;
-          // }
+          clockTimeout = clocks();
+          clockLineCounter = 0;
+          if (data_line)
+          {
+            transmit_data = 1;
+          }
 
-          delayMicroseconds(10);
+          // delayMicroseconds(10);
         }
         else
         {
@@ -208,12 +230,13 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
           if (clockLineCounter >= kClockLineMaxSize)
           {
             clockLineCounter = 0;
-            GPIO_Clear(kSignalPin);
             GPIO_Set(kProcessPin);
             transmitBuffer[0] = (transmit_data >> 8) & 0xFF;
             transmitBuffer[1] = transmit_data & 0xFF;
             Serial.write(transmitBuffer);
+            GPIO_Clear(kSignalPin);
             GPIO_Clear(kProcessPin);
+            level = 0;
           }
         }
       }

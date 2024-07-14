@@ -25,8 +25,6 @@ void system_init();
 inline uint32_t IRAM_ATTR clocks();
 
 // globals
-uint8_t clockLineCounter = 0;
-uint32_t clockTimeout = 0;
 
 uint32_t wdt_timeout_counter = 0;
 
@@ -43,9 +41,33 @@ void app_main()
 
     register uint16_t transmit_data = 0;
 
+    register uint8_t clockLineCounter = 0;
+    register uint32_t clockTimeout = 0;
+
+    bool clean_clock = false;
+    uint32_t clean_clock_timeout = 0;
+
     delay_ms(kDelayStartMs);
     system_init();
     gpio_init(); // Initialize GPIO
+
+    for (int counter = 0; counter < 5; counter++)
+    {
+        gpio_set_level(kProcessPin, 0);
+        gpio_set_level(kSignalPin, 0);
+        ets_delay_us(100);
+        gpio_set_level(kProcessPin, 1);
+        gpio_set_level(kSignalPin, 1);
+        ets_delay_us(100);
+    }
+
+    while (!gpio_get_level(kClockPin))
+        ;
+    while (gpio_get_level(kClockPin))
+        ;
+    ets_delay_us(15);
+    gpio_set_level(kProcessPin, 0);
+    gpio_set_level(kSignalPin, 0);
 
     while (1)
     {
