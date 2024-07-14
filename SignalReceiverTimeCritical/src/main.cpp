@@ -32,6 +32,7 @@
 #define kProcessPin GPIO_NUM_2
 
 #define kSignalPin GPIO_NUM_19
+#define kErrorPin GPIO_NUM_18
 
 const uint32_t kSerialBaudRate = 576000;
 
@@ -40,11 +41,13 @@ const uint32_t kDelayLoopMs = 1000;
 
 const uint32_t kClockLineMaxSize = 16;
 
-const uint32_t kClockTimeout = 500000000;
+const uint32_t kClockTimeout = 300000000;
 
 const uint32_t kWdtRefreshInSeconds = 5;
 
 const uint32_t kWdtTimeout = 100000;
+
+uint32_t check_timeout = 0;
 
 // globals
 
@@ -88,6 +91,9 @@ void setup()
   gpio_pad_select_gpio(kSignalPin);
   gpio_set_direction(kSignalPin, GPIO_MODE_OUTPUT);
 
+  gpio_pad_select_gpio(kErrorPin);
+  gpio_set_direction(kErrorPin, GPIO_MODE_OUTPUT);
+
   // // Set the pins as inputs
   gpio_pad_select_gpio(kDataPin);
   gpio_set_direction(kDataPin, GPIO_MODE_INPUT);
@@ -104,6 +110,7 @@ void setup()
 
   GPIO_Clear(kSignalPin);
   GPIO_Clear(kProcessPin);
+  GPIO_Clear(kErrorPin);
 
   delay(kDelayStartMs);
 
@@ -120,6 +127,7 @@ void setup()
       &timeCriticalTaskHandle,
       1 // Pin to core 1
   );
+  delay(1000);
 
   // Create the serial task pinned to core 0
   // xTaskCreatePinnedToCore(
@@ -136,6 +144,7 @@ void setup()
 void loop()
 {
   vTaskDelete(NULL);
+  // configASSERT(uxCriticalNesting == 1000UL);
 }
 
 inline void IRAM_ATTR TransmitBuffer(void)
@@ -155,10 +164,6 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
 {
 
   register int level, old_level = 0, data_line = 0;
-
-  register uint32_t check_timeout = 0;
-
-  register uint32_t check_timeout_frame_size = 0;
 
   register uint16_t transmit_data = 0;
 
@@ -216,8 +221,9 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
           {
             transmit_data = 1;
           }
-
-          // delayMicroseconds(10);
+          level = 0;
+          GPIO_Set(kErrorPin);
+          delayMicroseconds(15);
         }
         else
         {
@@ -236,6 +242,7 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
             Serial.write(transmitBuffer);
             GPIO_Clear(kSignalPin);
             GPIO_Clear(kProcessPin);
+            GPIO_Clear(kErrorPin);
             level = 0;
           }
         }
