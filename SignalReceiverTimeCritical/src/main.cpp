@@ -109,7 +109,7 @@ void setup()
   clockTimeout = 0;
   dataReady = false;
 
-  transmitBuffer[2] = 0x00;
+  transmitBuffer[2] = 0x0A;
   transmitBuffer[3] = 0x00;
 
   GPIO_Clear(kSignalPin);
@@ -126,7 +126,7 @@ void setup()
       NULL,
       TIME_CRITICAL_TASK_PRIORITY,
       &timeCriticalTaskHandle,
-      1 // Pin to core 1
+      0 // Pin to core 1
   );
   delay(1000);
 }
@@ -310,7 +310,7 @@ void IRAM_ATTR timeCriticalTaskB(void *pvParameters)
       transmit_data <<= 1;
       if (!clockLineCounter)
       {
-        GPIO_Set(kSignalPin);
+        // GPIO_Set(kSignalPin);
         clockTimeout = myMicros();
         transmit_data = 0;
         clockLineCounter = 1;
@@ -328,17 +328,18 @@ void IRAM_ATTR timeCriticalTaskB(void *pvParameters)
         {
           clockTimeout = myMicros() - clockTimeout;
           clockLineCounter = 0;
-          GPIO_Set(kProcessPin);
+          // GPIO_Set(kProcessPin);
           transmitBuffer[0] = (transmit_data >> 8) & 0xFF;
           transmitBuffer[1] = transmit_data & 0xFF;
-          if (clockTimeout < 100)
+          if (clockTimeout < 130)
             Serial.write(transmitBuffer);
           else
           {
             delayMicroseconds(10);
           }
-          GPIO_Clear(kSignalPin);
-          GPIO_Clear(kProcessPin);
+          clockTimeout = 0;
+          // GPIO_Clear(kSignalPin);
+          // GPIO_Clear(kProcessPin);
           level = 0;
         }
       }
