@@ -1,3 +1,5 @@
+#pragma GCC optimize("O3")
+
 #include <Arduino.h>
 #include "FreeRTOSConfig.h"
 #include "freertos/FreeRTOS.h"
@@ -7,17 +9,20 @@
 #include "soc/uart_struct.h"
 #include "soc/timer_group_struct.h"
 #include "soc/timer_group_reg.h"
+#include "soc/gpio_struct.h"
 #include "esp_err.h"
 #include "esp_task_wdt.h"
 #include <freertos/semphr.h>
+#include "soc/rtc_cntl_reg.h"
+#include "soc/uart_reg.h"
 
 #define UART_NUM UART_NUM_0
-#define TX_PIN UART_PIN_NO_CHANGE // Default TX pin for UART0
+#define TX_PIN GPIO_NUM_1         // Default TX pin for UART0
 #define RX_PIN UART_PIN_NO_CHANGE // Default RX pin for UART0
 #define BUF_SIZE (2048)
 
 #define TIME_CRITICAL_TASK_STACK_SIZE 8192
-#define TIME_CRITICAL_TASK_PRIORITY configMAX_PRIORITIES - 2
+#define TIME_CRITICAL_TASK_PRIORITY configMAX_PRIORITIES - 1
 
 #define SERIAL_TASK_STACK_SIZE 8192
 #define SERIAL_TASK_PRIORITY 0
@@ -52,7 +57,8 @@ uint32_t check_timeout = 0;
 // globals
 
 TaskHandle_t timeCriticalTaskHandle = NULL;
-TaskHandle_t serialTaskHandle = NULL;
+
+portMUX_TYPE criticalMutex = portMUX_INITIALIZER_UNLOCKED;
 
 uint16_t transmitData = 0;
 boolean dataReady = false;
@@ -71,18 +77,16 @@ inline uint32_t IRAM_ATTR clocks(void);
 void IRAM_ATTR TransmitBuffer(void);
 
 void IRAM_ATTR timeCriticalTask(void *pvParameters);
+void IRAM_ATTR timeCriticalTaskB(void *pvParameters);
 
-void IRAM_ATTR serialTask(void *pvParameters);
+inline uint32_t IRAM_ATTR myMicros(void);
 
-void InitUartDma(void);
-
-void IRAM_ATTR WriteUartDma(const uint8_t *data, size_t length);
+void IRAM_ATTR DisableScheduler();
 
 void setup()
 {
   delay(kDelayStartMs);
   Serial.begin(kSerialBaudRate);
-  // InitUartDma();
 
   // Set the pins as outputs
   gpio_pad_select_gpio(kProcessPin);
@@ -114,12 +118,9 @@ void setup()
 
   delay(kDelayStartMs);
 
-  Serial.printf("\n----------------------------------\n");
-  Serial.printf("Start Application\n\n");
-
   // Create the time-critical task pinned to core 1
   xTaskCreatePinnedToCore(
-      timeCriticalTask,
+      timeCriticalTaskB,
       "timeCriticalTask",
       TIME_CRITICAL_TASK_STACK_SIZE,
       NULL,
@@ -128,23 +129,13 @@ void setup()
       1 // Pin to core 1
   );
   delay(1000);
-
-  // Create the serial task pinned to core 0
-  // xTaskCreatePinnedToCore(
-  //     serialTask,
-  //     "serialTask",
-  //     SERIAL_TASK_STACK_SIZE,
-  //     NULL,
-  //     SERIAL_TASK_PRIORITY,
-  //     &serialTaskHandle,
-  //     0 // Pin to core 0
-  // );
 }
 
 void loop()
 {
   vTaskDelete(NULL);
   // configASSERT(uxCriticalNesting == 1000UL);
+  // taskYIELD();
 }
 
 inline void IRAM_ATTR TransmitBuffer(void)
@@ -169,6 +160,8 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
 
   boolean check = false;
 
+  // DisableScheduler();
+
   GPIO_Set(kSignalPin);
   GPIO_Set(kProcessPin);
   while (!check)
@@ -192,9 +185,7 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
 
   while (true)
   {
-
     level = GPIO_IN_Read(kClockPin);
-
     if ((level != old_level) && (old_level == 0))
     {
       data_line = GPIO_IN_Read(kDataPin);
@@ -252,45 +243,17 @@ void IRAM_ATTR timeCriticalTask(void *pvParameters)
   }
 }
 
-void InitUartDma(void)
+void IRAM_ATTR DisableScheduler()
 {
-  uart_config_t uart_config = {
-      .baud_rate = kSerialBaudRate,
-      .data_bits = UART_DATA_8_BITS,
-      .parity = UART_PARITY_DISABLE,
-      .stop_bits = UART_STOP_BITS_1,
-      .flow_ctrl = UART_HW_FLOWCTRL_DISABLE};
+  // Disable Task Watchdog Timer
+  // esp_task_wdt_deinit();
+  WRITE_PERI_REG(RTC_CNTL_WDTCONFIG0_REG, 0);
+  // // Disable the main system watchdog timer
+  WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(0), 0);
+  WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(1), 0);
 
-  uart_param_config(UART_NUM, &uart_config);
-  uart_set_pin(UART_NUM, TX_PIN, RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-  uart_driver_install(UART_NUM, BUF_SIZE * 2, BUF_SIZE * 2, 0, NULL, 0);
-  uart_set_mode(UART_NUM, UART_MODE_UART);
-}
-
-void IRAM_ATTR SetPinLevel(uint32_t pin, boolean level)
-{
-  if (level)
-  {
-    if (pin < 32)
-    {
-      GPIO.out_w1ts = (1 << pin);
-    }
-    else
-    {
-      GPIO.out1_w1ts.val = (1 << (pin - 32));
-    }
-  }
-  else
-  {
-    if (pin < 32)
-    {
-      GPIO.out_w1tc = (1 << pin);
-    }
-    else
-    {
-      GPIO.out1_w1tc.val = (1 << (pin - 32));
-    }
-  }
+  // Disable Interrupt Watchdog Timer
+  // esp_int_wdt_disable();
 }
 
 inline uint32_t IRAM_ATTR clocks()
@@ -298,4 +261,88 @@ inline uint32_t IRAM_ATTR clocks()
   uint32_t ccount;
   asm volatile("rsr %0, ccount" : "=a"(ccount));
   return ccount;
+}
+
+inline uint32_t IRAM_ATTR myMicros()
+{
+  return clocks() / (240);
+}
+
+void IRAM_ATTR timeCriticalTaskB(void *pvParameters)
+{
+
+  register int level, old_level = 0, data_line = 0;
+
+  register uint16_t transmit_data = 0;
+
+  boolean check = false;
+
+  GPIO_Set(kSignalPin);
+  GPIO_Set(kProcessPin);
+  while (!check)
+  {
+    level = GPIO_IN_Read(kClockPin);
+    if (!level)
+      check = true;
+  };
+  check = false;
+  while (!check)
+  {
+    level = GPIO_IN_Read(kClockPin);
+    if (level)
+      check = true;
+  };
+
+  delayMicroseconds(20);
+  GPIO_Clear(kSignalPin);
+  GPIO_Clear(kProcessPin);
+  level = 0;
+  old_level = 0;
+
+  clockTimeout = 0;
+
+  while (true)
+  {
+    level = GPIO_IN_Read(kClockPin);
+    if ((level != old_level) && (old_level == 0))
+    {
+      data_line = GPIO_IN_Read(kDataPin);
+      transmit_data <<= 1;
+      if (!clockLineCounter)
+      {
+        GPIO_Set(kSignalPin);
+        clockTimeout = myMicros();
+        transmit_data = 0;
+        clockLineCounter = 1;
+        if (data_line)
+          transmit_data = 1;
+      }
+      else
+      {
+        clockLineCounter++;
+        if (data_line)
+        {
+          transmit_data += 1;
+        }
+        if (clockLineCounter >= kClockLineMaxSize)
+        {
+          clockTimeout = myMicros() - clockTimeout;
+          clockLineCounter = 0;
+          GPIO_Set(kProcessPin);
+          transmitBuffer[0] = (transmit_data >> 8) & 0xFF;
+          transmitBuffer[1] = transmit_data & 0xFF;
+          if (clockTimeout < 100)
+            Serial.write(transmitBuffer);
+          else
+          {
+            delayMicroseconds(10);
+          }
+          GPIO_Clear(kSignalPin);
+          GPIO_Clear(kProcessPin);
+          level = 0;
+        }
+      }
+    }
+    old_level = level;
+  }
 }
